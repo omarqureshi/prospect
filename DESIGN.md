@@ -858,6 +858,11 @@ Everything else is comparatively known work.
 
 ### v0
 
+> **Status.** Built: the router DSL, one dispatcher, Rack and Lambda adapters,
+> IR extraction, the TypeScript emitter, and the CDK construct — 129 specs.
+> Not built: packaging, the RBS and Ruby client emitters, and schema-hash drift
+> checking. See §11, where the gaps are ranked.
+
 - Sorbet reflection → IR, behind the frontend interface, strict-mode boot
   validation
 - Router DSL: `query`, `mutation`, `mount`, `errors`, runtime middleware, `deploy`
@@ -914,36 +919,95 @@ there, but a single implementation can't prove it fits anything else.
 
 ## 11. Open questions
 
-- Name, and gem availability.
-- Do struct definitions need to be declared to the router, or is reachability
-  from procedure signatures enough? (Reachability is nicer; watch out for
-  polymorphic fields.)
-- Sum types: Sorbet expresses them awkwardly, TS wants discriminated unions.
-  Require an explicit discriminator field?
-- Should the OpenAPI emitter be in v0? It's nearly free once the IR exists, and
-  buys documentation plus non-generated-client consumers.
-- Can validation genuinely be synthesized from the IR (§2), or does `T::Struct`
-  turn out to encode constraints the IR can't express? This decides whether the
-  frontend seam is load-bearing or decorative, and it should be answered by the
-  reflection spike rather than assumed.
-- Does arm64 cold-start materially better than x86_64? Measured x86_64 only
-  (§6). If arm64's init is meaningfully faster, "arm64 with mandated arm64 CI"
-  could still beat "x86_64 everywhere" despite the 41× emulated build penalty.
-  Cheap to test — rerun `spike/coldstart/run.sh` under `--platform linux/arm64`.
-- The `from_hash` row in the cold-start table is nonlinear (73ms of extra cost at
-  512MB, ~6ms at 1024MB). That gap is larger than the CPU difference explains,
-  so it is probably GC pressure or measurement noise rather than a real cliff —
-  but it's worth confirming before anyone sizes a function at 512MB.
-- Does Ruby 4.0's VM boot floor (148ms at 512MB) improve with `--yjit` or a
-  bootsnap-style cache? 148ms is over half the measured total and none of it is
-  ours.
-- The IR needs a `date` scalar — `AWSCDK`-adjacent work surfaced that §4's list
-  has `timestamp` but nothing for `:date` columns or plain `Date`.
-- API Gateway has a default per-API route quota. `:per_procedure` at scale may
-  need greedy routes plus in-function dispatch rather than one route each —
-  which is fine, since §6 already makes granularity invisible to clients.
-- ~~Does `Prospect::CDK::Service` belong in this gem or a companion?~~ Answered:
-  it lives here but behind an explicit `require "prospect/cdk"`, so nothing is
-  loaded by default. A separate require costs nothing and gets the same result
-  as a separate gem; it can still become one if the dependency ever needs its
-  own release cycle.
+Reordered after building v0 and porting a real app onto it. The ranking is by
+how much each would hurt, not by how interesting it is.
+
+### Answered
+
+- ~~Name and gem availability.~~ `prospect`, verified unclaimed.
+- ~~Do struct definitions need declaring to the router, or is reachability from
+  procedure signatures enough?~~ Reachability. `IR.extract` walks from each
+  procedure's input and output and registers what it finds, with a placeholder
+  written before fields are walked so self-referential types terminate.
+- ~~The IR needs a `date` scalar.~~ Added, along with `DateTime` mapping to
+  `timestamp` — ORMs return `DateTime`, never `Time`.
+- ~~Does `Prospect::CDK::Service` belong in a companion gem?~~ No: an explicit
+  `require "prospect/cdk"` gives the same isolation for free, and can still
+  become a gem if the dependency needs its own release cycle.
+- ~~Which errors should Prospect own?~~ `NotFound`, `Forbidden`, `Unauthorized`,
+  `InvalidInput`. bookface redeclaring them silently lost their HTTP statuses
+  (an unauthenticated call returned 422), which settled it.
+
+### Open — and now blocking
+
+1. **Nothing packages a deployment artifact.** `Prospect::CDK::Service` takes a
+   `code_root` and assumes prebuilt per-unit directories are already sitting
+   there. Nothing generates the `handler.rb` shim, runs `bundle install
+   --standalone`, or slices gems by unit. The construct synthesises correct
+   CloudFormation for functions whose code does not exist. This is the single
+   largest gap between "specs pass" and "deployable", and every measurement in
+   §6 assumed a packaging step that was never built.
+2. **Nothing has ever been deployed.** Cold start was measured in a
+   Lambda-shaped container, not on Lambda, so it excludes sandbox provisioning.
+   The CDK specs assert on synthesised CloudFormation, not on a stack that came
+   up. Until one deploy happens, §6's numbers are an approximation and the
+   construct is untested against the thing it exists to configure.
+3. **The schema hash is emitted and then ignored.** §4 describes it as the drift
+   detector: clients embed it, send it as a header, the server warns or rejects
+   on mismatch. `IR.extract` computes it; nothing sends it and nothing checks
+   it. The defence described in §7 as one of three layers is currently one of
+   two.
+
+### Open — design questions the implementation sharpened
+
+4. **The frontend seam is still decorative.** §2's rule is that the IR must be
+   sufficient to construct a validator. `Dispatcher#validate!` does not read the
+   IR — it reads Sorbet's `T::Types::Base` objects directly via `props`. So a
+   non-Sorbet frontend would still have to bring its own validator, which is
+   exactly the outcome the rule exists to prevent. Fixing it means validating
+   from IR nodes instead, and that is the only thing that would make the seam
+   real rather than intended.
+5. **Middleware scoping is unsettled.** `authenticated do … end` is implemented
+   and works, but bookface flagged the shape: a block hides its own extent in a
+   long file, and there is no way to say "all mutations". Alternatives are
+   `use RequireLogin, only: %i[create update]` or a tRPC-style procedure
+   builder. Cheap to change now, expensive once apps depend on it.
+6. **Context narrowing.** `ctx.viewer` stays `T.nilable` inside
+   `authenticated do`, so every bookface mutation opens with `ctx.authenticated!`
+   to satisfy a type system that should already know. This is tRPC's most-loved
+   feature and the largest ergonomic gap in the port. Needs per-procedure
+   generated RBI, and remains a research spike.
+7. **Sum types.** The IR has a `union` node and nothing produces one — every
+   Sorbet union encountered so far has been `T.nilable` or `T::Boolean`, both of
+   which collapse. A real sum type needs a discriminator to emit a usable
+   TypeScript discriminated union, and Sorbet has no natural way to declare one.
+8. **Pagination has no IR shape.** bookface invented `FeedPage { posts,
+   next_cursor }` by hand. Cursor-paginated lists recur often enough that
+   letting every app invent one guarantees they will all differ.
+
+### Open — smaller, or cheap to answer
+
+9. **Is `.max` the right precedence for `deploy:` settings?** Where a unit holds
+   several procedures the construct takes the largest requested memory and
+   timeout, on the grounds that undersizing fails at runtime and oversizing is
+   a rounding error. Defensible, but it means one greedy procedure silently
+   raises the bill for its whole service.
+10. **Does arm64 cold-start materially better?** Only x86_64 was measured. If
+    arm64's init is meaningfully faster, "arm64 with mandated arm64 build hosts"
+    could still beat "x86_64 everywhere" despite the 41× emulated build penalty.
+    One rerun of `spike/coldstart/run.sh` under `--platform linux/arm64`.
+11. **The `from_hash` row in the cold-start table is nonlinear** — 73ms extra at
+    512MB, ~6ms at 1024MB, a gap larger than the CPU difference explains.
+    Probably GC or noise, but worth confirming before anyone sizes at 512MB.
+12. **Does Ruby 4.0's 148ms VM boot floor improve with YJIT or a bootsnap-style
+    cache?** Over half the measured cold start, and none of it is ours.
+13. **API Gateway's per-API route quota.** `:per_procedure` creates one route
+    per procedure and will hit it. The fix is greedy routes plus in-function
+    dispatch, which costs nothing in client terms because §6 already makes
+    granularity invisible — but it is unimplemented.
+14. **The RBS and Ruby client emitters do not exist.** §9 puts both in v0 and
+    only TypeScript was built. The RBS one matters more than it looks: it is the
+    only real evidence the IR is checker-agnostic rather than TypeScript-shaped,
+    and that claim is currently untested.
+15. **Should the OpenAPI emitter be in v0?** Still nearly free once the IR
+    exists, and still buys documentation plus non-generated-client consumers.
