@@ -18,7 +18,8 @@ module Prospect
 
       class << self
         def call(ir)
-          [header, types(ir), procedures(ir), errors(ir), wire_maps(ir)].compact.join("\n")
+          [header, types(ir), procedures(ir), errors(ir),
+           wire_maps(ir), proc_types(ir), error_codes(ir)].compact.join("\n")
         end
 
         private
@@ -75,9 +76,51 @@ module Prospect
         # listed here are ever touched, so `reactionCounts`'s emoji keys and
         # `ValidationFailed.errors`'s field keys pass through untouched by
         # construction rather than by care. DESIGN.md §7.
+        # The IR knows every procedure's input and output type. Emitting the
+        # table means the client never guesses — an earlier hand-maintained
+        # version of this in bookface's client was the one thing guaranteed to
+        # drift.
+        def proc_types(ir)
+          rows = ir["procedures"].map { |p|
+            %(  "#{p['path']}": { input: "#{p['input']['name']}", output: "#{p['output']['name']}" },)
+          }
+          <<~TS
+
+            /** Input/output type per procedure, so the client can map both directions. */
+            export const PROC_TYPES: Record<string, { input: string; output: string }> = {
+            #{rows.join("\n")}
+            }
+          TS
+        end
+
+        # Wire code -> error interface, so a failure response can be mapped the
+        # same way a success one is. Without this an error's fields stay
+        # snake_case while its declared TS interface says camelCase.
+        def error_codes(ir)
+          declared = ir["procedures"].flat_map { |p| p["errors"] }.uniq { |e| e["name"] }
+          return nil if declared.empty?
+
+          rows = declared.map { |e| %(  #{e['code']}: "#{e['name']}",) }
+          <<~TS
+
+            /** Wire error code -> interface name. */
+            export const ERROR_TYPES: Record<string, string> = {
+            #{rows.join("\n")}
+            }
+          TS
+        end
+
         def wire_maps(ir)
           renames = {}
           nested  = {}
+
+          # Errors are structs on the wire too, and need the same treatment.
+          # Note their map-valued fields (ValidationFailed#errors, keyed by field
+          # name) are absent from `nested`, so their keys are never touched.
+          ir["procedures"].flat_map { |p| p["errors"] }.uniq { |e| e["name"] }.each do |e|
+            r = e["fields"].to_h { |f| [camel(f), f] }.reject { |c, w| c == w }
+            renames[e["name"]] = r if r.any?
+          end
 
           ir["types"].each do |name, defn|
             r = defn["fields"].to_h { |f| [camel(f["name"]), f["name"]] }

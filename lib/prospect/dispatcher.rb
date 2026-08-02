@@ -44,8 +44,13 @@ module Prospect
     def coerce(proc_, raw)
       input = begin
         proc_.input.from_hash(raw || {})
-      rescue TypeError, ArgumentError, KeyError => e
-        raise InvalidInput.new(errors: { "_" => e.message })
+      rescue StandardError => e
+        # Deliberately broad. A missing required prop raises a bare RuntimeError
+        # ("Tried to deserialize a required prop from a nil value"), so a narrow
+        # rescue list let a malformed request escape as a 500 — found by sending
+        # camelCase keys the server doesn't know. Nothing a client sends should
+        # ever produce a 500.
+        raise InvalidInput.new(errors: { field_from(e.message) => reason(e) })
       end
 
       validate!(proc_.input, input)
@@ -61,6 +66,16 @@ module Prospect
     # So walk the declared props and check each against its type. This is the
     # same reflection the IR extractor needs, and it's the concrete case for
     # DESIGN.md §2's rule that the IR must be sufficient to build a validator.
+    # Sorbet reports the offending prop inside its message rather than
+    # structurally, so recover it to keep errors per-field.
+    def field_from(message)
+      message[/prop=(\w+)/, 1] || "_"
+    end
+
+    def reason(error)
+      error.message.include?("required prop") ? "is required" : error.message.lines.first.strip
+    end
+
     def validate!(klass, instance)
       errors = {}
       klass.props.each do |name, rules|
