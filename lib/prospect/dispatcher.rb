@@ -1,0 +1,101 @@
+# frozen_string_literal: true
+
+module Prospect
+  # The single dispatcher. Rack, Lambda and the in-process caller are all event
+  # *adapters* that decode a request and call this — they must never reimplement
+  # validation, middleware or error mapping. That divergence is exactly how
+  # "works locally, breaks deployed" gets built in (DESIGN.md §6).
+  class Dispatcher
+    MIDDLEWARE = {
+      authenticated: ->(ctx) { ctx.authenticated! }
+    }.freeze
+
+    def initialize(router)
+      @router = router
+      @by_id  = router.procedures.to_h { |p| [p.id, p] }
+    end
+
+    attr_reader :router
+
+    def procedure(id) = @by_id[id]
+    def procedure_ids = @by_id.keys
+
+    # Returns [status, body_hash]. Never raises for contract errors — those are
+    # part of the response.
+    def call(id, raw_input, ctx)
+      proc_ = @by_id[id] or return not_found(id)
+
+      input = coerce(proc_, raw_input)
+      run_middleware(proc_, ctx)
+      output = proc_.handler.call(input, ctx)
+
+      [200, { "ok" => true, "result" => serialize(output) }]
+    rescue Error => e
+      [e.status, { "ok" => false, "error" => stringify(e.to_h) }]
+    end
+
+    private
+
+    def not_found(id)
+      [404, { "ok" => false,
+              "error" => { "code" => "unknown_procedure", "procedure" => id } }]
+    end
+
+    def coerce(proc_, raw)
+      input = begin
+        proc_.input.from_hash(raw || {})
+      rescue TypeError, ArgumentError, KeyError => e
+        raise InvalidInput.new(errors: { "_" => e.message })
+      end
+
+      validate!(proc_.input, input)
+      input
+    end
+
+    # `T::Struct.from_hash` does NOT check value types — only `.new` does.
+    # Verified: `CreatePostInput.from_hash({"body" => 42})` yields an Integer in
+    # a `T.nilable(String)` field, no error. An earlier draft of DESIGN.md §3
+    # claimed validation came free with `from_hash`; it does not, and an
+    # unvalidated input reaching a handler is how a type error becomes a 500.
+    #
+    # So walk the declared props and check each against its type. This is the
+    # same reflection the IR extractor needs, and it's the concrete case for
+    # DESIGN.md §2's rule that the IR must be sufficient to build a validator.
+    def validate!(klass, instance)
+      errors = {}
+      klass.props.each do |name, rules|
+        type = rules[:type_object] || rules[:type]
+        next unless type.respond_to?(:valid?)
+
+        value = instance.public_send(name)
+        next if type.valid?(value)
+
+        errors[name.to_s] = "expected #{type}, got #{value.class}"
+      end
+      raise InvalidInput.new(errors: errors) if errors.any?
+    end
+
+    def run_middleware(proc_, ctx)
+      proc_.middleware.each do |name|
+        fn = MIDDLEWARE.fetch(name) { raise ArgumentError, "unknown middleware #{name}" }
+        fn.call(ctx)
+      end
+    end
+
+    def serialize(value)
+      case value
+      when nil then nil
+      when Array then value.map { |v| serialize(v) }
+      when Hash then value.to_h { |k, v| [k.to_s, serialize(v)] }
+      when Time then value.utc.iso8601   # pinned encoding — bookface DESIGN §6.5
+      when Symbol then value.to_s
+      else
+        value.respond_to?(:serialize) ? stringify(value.serialize) : value
+      end
+    end
+
+    def stringify(hash)
+      hash.to_h { |k, v| [k.to_s, serialize(v)] }
+    end
+  end
+end

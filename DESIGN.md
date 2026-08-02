@@ -138,9 +138,34 @@ end
 semantics, batching eligibility, and whether the generated TS client exposes a
 procedure via a query hook or a mutation hook.
 
-Input validation is nearly free: `T::Struct.from_hash` already type-checks on
-construction. The work is wrapping its poor error messages into structured
-per-field errors that survive the wire.
+**Correction — input validation is *not* free.** An earlier draft of this
+section claimed `T::Struct.from_hash` type-checks on construction. It does not.
+Verified while porting bookface:
+
+```ruby
+CreatePostInput.from_hash({ "body" => 42 })  # => accepted, body is Integer 42
+CreatePostInput.new(body: 42)                # => TypeError
+```
+
+Only `.new` checks. `from_hash` is deserialization, not validation, and an
+unvalidated input reaching a handler is how a wrong type becomes a 500 instead
+of a 400.
+
+So the dispatcher walks the declared props and checks each value against its
+type object (`Prospect::Dispatcher#validate!`), producing per-field errors:
+
+```json
+{ "code": "invalid_input", "errors": { "body": "expected T.nilable(String), got Integer" } }
+```
+
+This matters beyond the bug. "Sorbet gives us runtime validation for free" was
+one of the arguments for choosing it as the v0 frontend (§2). The honest version
+is narrower: Sorbet gives us *declared types reflectable at runtime*, and we
+build the validator from them. That is still a real advantage over a
+type-erasing tool — but it's the reflection that's load-bearing, not the
+validation, and it makes §2's rule that **the IR must be sufficient to construct
+a validator** a working requirement rather than an aspiration. The same walk
+serves both.
 
 ## 4. The IR
 
