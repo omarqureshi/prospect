@@ -11,8 +11,8 @@ module Prospect
   #   GET  /rpc/posts/feed?input=…  urlencoded JSON, cacheable
   #   POST /rpc?batch=1             array of { id, input }
   class RackApp
-    def initialize(router, context_builder:)
-      @dispatcher = Dispatcher.new(router)
+    def initialize(router, context_builder:, on_schema_mismatch: :warn)
+      @dispatcher = Dispatcher.new(router, on_schema_mismatch: on_schema_mismatch)
       @build_context = context_builder
     end
 
@@ -21,6 +21,12 @@ module Prospect
     def call(env)
       req = Rack::Request.new(env)
       return json(200, health) if req.path == "/up"
+
+      # Checked once per request, before any procedure runs — a batch is one
+      # request, and a stale client is stale for all of it.
+      if (mismatch = @dispatcher.check_schema(env["HTTP_X_PROSPECT_SCHEMA"]))
+        return json(*mismatch)
+      end
       return batch(req) if req.path == "/rpc" && req.params.key?("batch")
 
       id = procedure_id(req.path)
@@ -36,7 +42,7 @@ module Prospect
     private
 
     def health
-      { "ok" => true, "procedures" => @dispatcher.procedure_ids.sort }
+      { "ok" => true, "schema" => @dispatcher.schema_hash, "procedures" => @dispatcher.procedure_ids.sort }
     end
 
     # /rpc/posts/feed -> "posts.feed". Slash-separated on the wire so API Gateway

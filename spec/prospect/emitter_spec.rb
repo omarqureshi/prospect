@@ -52,6 +52,12 @@ RSpec.describe Prospect::Emit::TypeScript do
     end
   end
 
+  describe "the schema hash" do
+    it "publishes the contract fingerprint for the client to send" do
+      expect(emitted).to include(%(export const SCHEMA_HASH = "#{ir['schema_hash']}"))
+    end
+  end
+
   describe "the wire tables" do
     it "records renames only for fields that actually differ" do
       expect(emitted).to include(%(Matrix: { withDefault: "with_default", twoWords: "two_words" }))

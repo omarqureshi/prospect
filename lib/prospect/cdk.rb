@@ -83,7 +83,10 @@ module Prospect
           code:         AWSCDK::Lambda::Code.from_asset(asset_path_for(name)),
           memory_size:  setting(procedures, :memory_size),
           timeout:      AWSCDK::Duration.seconds(setting(procedures, :timeout_seconds)),
-          environment:  { "PROSPECT_UNIT" => name }.merge(@props[:environment] || {})
+          # Baked in at synth time so no cold start spends anything walking the
+          # type graph to recompute it (Dispatcher#schema_hash prefers this).
+          environment:  { "PROSPECT_UNIT" => name, "PROSPECT_SCHEMA_HASH" => schema_hash }
+                          .merge(@props[:environment] || {})
         })
       end
 
@@ -95,6 +98,10 @@ module Prospect
         from_procedures = procedures.filter_map { |p| p.deploy[key] }
         from_router     = procedures.map { |p| router_for(p)&.deploy_config&.dig(key) }.compact
         (from_procedures + from_router + [@props.dig(:defaults, key), @props[key]].compact).max
+      end
+
+      def schema_hash
+        @schema_hash ||= IR.extract(@router)["schema_hash"]
       end
 
       def router_for(procedure)

@@ -18,7 +18,7 @@ module Prospect
 
       class << self
         def call(ir)
-          [header, types(ir), procedures(ir), errors(ir),
+          [header, schema_hash(ir), types(ir), procedures(ir), errors(ir),
            wire_maps(ir), proc_types(ir), error_codes(ir)].compact.join("\n")
         end
 
@@ -34,6 +34,14 @@ module Prospect
             // NOT touch map keys, which are data.
 
           TS
+        end
+
+        # The client sends this on every request so the server can tell it was
+        # generated against a different contract — the only drift check that
+        # survives past build time, since a cached browser bundle type-checked
+        # perfectly well when it was built. DESIGN.md §4.
+        def schema_hash(ir)
+          %(export const SCHEMA_HASH = "#{ir['schema_hash']}"\n)
         end
 
         def types(ir)

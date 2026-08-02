@@ -117,6 +117,15 @@ RSpec.describe "Prospect::CDK::Service", :cdk do
         expect(units).to contain_exactly("echo", "other.touch")
       end
 
+      # Recomputing it means walking every declared type — fine once at synth,
+      # wasteful on every cold start.
+      it "bakes the schema hash in, so no cold start recomputes it" do
+        hash = Prospect::IR.extract(Fixtures::AppRouter)["schema_hash"]
+        synth.has_resource_properties("AWS::Lambda::Function", {
+          "Environment" => { "Variables" => { "PROSPECT_SCHEMA_HASH" => hash } }
+        })
+      end
+
       it "merges caller-supplied environment" do
         template = synth(environment: { "TABLE" => "posts" })
         template.has_resource_properties("AWS::Lambda::Function", {

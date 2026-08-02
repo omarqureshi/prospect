@@ -7,7 +7,7 @@
 // must not.
 
 import type { Matrix, Nested, Ping, Procedures, NotFound } from "./schema"
-import { WIRE_FIELDS, PROC_TYPES, ERROR_TYPES } from "./schema"
+import { WIRE_FIELDS, PROC_TYPES, ERROR_TYPES, SCHEMA_HASH } from "./schema"
 
 // --- scalars round-trip to the right TS primitives ---------------------------
 
@@ -95,9 +95,10 @@ const undeclaredError: Procedures["echo.boom"]["error"] = { code: "forbidden", a
 const fields: Record<string, string> = WIRE_FIELDS.Matrix
 const types: { input: string; output: string } = PROC_TYPES["echo.ping"]
 const errorName: string = ERROR_TYPES.not_found
+const hash: string = SCHEMA_HASH
 
 // Exported so noUnusedLocals doesn't complain about the assertions above.
 export { boomError,
   matrix, explicitNull, omittedDefault, anyEmoji, dynamicKey,
-  pingIn, pingOut, declared, fields, types, errorName,
+  pingIn, pingOut, declared, fields, types, errorName, hash,
 }

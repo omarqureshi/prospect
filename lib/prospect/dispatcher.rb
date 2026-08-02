@@ -10,12 +10,49 @@ module Prospect
       authenticated: ->(ctx) { ctx.authenticated! }
     }.freeze
 
-    def initialize(router)
+    # Header a client sends its schema hash in. Lower-case because API Gateway
+    # v2 normalises header names.
+    SCHEMA_HEADER = "x-prospect-schema"
+
+    def initialize(router, on_schema_mismatch: :warn)
       @router = router
       @by_id  = router.procedures.to_h { |p| [p.id, p] }
+      @on_schema_mismatch = on_schema_mismatch
     end
 
     attr_reader :router
+
+    # The contract's fingerprint (DESIGN.md §4).
+    #
+    # Prefers a value baked in at deploy time, because computing it means walking
+    # every declared type — fine once, wasteful on every cold start. Computed
+    # lazily otherwise, so an app that never checks never pays.
+    def schema_hash
+      @schema_hash ||= ENV["PROSPECT_SCHEMA_HASH"] || IR.extract(@router)["schema_hash"]
+    end
+
+    # Codegen's characteristic failure is a stale *deployed* client — one built
+    # against an older contract, which type-checked at the time and no longer
+    # matches. Returns nil to proceed, or [status, body] to reject.
+    #
+    # Warns rather than rejects by default: a hard failure would break every
+    # client already in a browser cache the moment the schema changed, which is
+    # a worse outcome than a log line. Opt in with on_schema_mismatch: :reject.
+    def check_schema(client_hash)
+      return nil if client_hash.nil? || client_hash.empty? || client_hash == schema_hash
+
+      case @on_schema_mismatch
+      when :off then nil
+      when :reject
+        [409, { "ok" => false,
+                "error" => { "code" => "schema_mismatch",
+                             "client" => client_hash, "server" => schema_hash } }]
+      else
+        warn "[prospect] schema mismatch: client #{client_hash}, server #{schema_hash}. " \
+             "The caller was generated against a different contract."
+        nil
+      end
+    end
 
     def procedure(id) = @by_id[id]
     def procedure_ids = @by_id.keys
@@ -57,15 +94,6 @@ module Prospect
       input
     end
 
-    # `T::Struct.from_hash` does NOT check value types — only `.new` does.
-    # Verified: `CreatePostInput.from_hash({"body" => 42})` yields an Integer in
-    # a `T.nilable(String)` field, no error. An earlier draft of DESIGN.md §3
-    # claimed validation came free with `from_hash`; it does not, and an
-    # unvalidated input reaching a handler is how a type error becomes a 500.
-    #
-    # So walk the declared props and check each against its type. This is the
-    # same reflection the IR extractor needs, and it's the concrete case for
-    # DESIGN.md §2's rule that the IR must be sufficient to build a validator.
     # Sorbet reports the offending prop inside its message rather than
     # structurally, so recover it to keep errors per-field.
     def field_from(message)
@@ -76,6 +104,15 @@ module Prospect
       error.message.include?("required prop") ? "is required" : error.message.lines.first.strip
     end
 
+    # `T::Struct.from_hash` does NOT check value types — only `.new` does.
+    # Verified: `CreatePostInput.from_hash({"body" => 42})` yields an Integer in
+    # a `T.nilable(String)` field, no error. An earlier draft of DESIGN.md §3
+    # claimed validation came free with `from_hash`; it does not, and an
+    # unvalidated input reaching a handler is how a type error becomes a 500.
+    #
+    # So walk the declared props and check each against its type. This is the
+    # same reflection the IR extractor needs, and it's the concrete case for
+    # DESIGN.md §2's rule that the IR must be sufficient to build a validator.
     def validate!(klass, instance)
       errors = {}
       klass.props.each do |name, rules|

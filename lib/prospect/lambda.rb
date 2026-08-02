@@ -19,12 +19,12 @@ module Prospect
   #   )
   #   def handle(event:, context:) = HANDLER.call(event, context)
   class Lambda
-    def self.handler(router, unit: nil, context_builder:)
-      new(router, unit: unit, context_builder: context_builder)
+    def self.handler(router, unit: nil, context_builder:, **opts)
+      new(router, unit: unit, context_builder: context_builder, **opts)
     end
 
-    def initialize(router, context_builder:, unit: nil)
-      @dispatcher = Dispatcher.new(router)
+    def initialize(router, context_builder:, unit: nil, on_schema_mismatch: :warn)
+      @dispatcher = Dispatcher.new(router, on_schema_mismatch: on_schema_mismatch)
       @unit = unit&.to_s
       @build_context = context_builder
     end
@@ -34,6 +34,10 @@ module Prospect
     def call(event, _lambda_context = nil)
       path = event["rawPath"] || event.dig("requestContext", "http", "path") || ""
       return respond(200, health) if path.end_with?("/up")
+
+      if (mismatch = @dispatcher.check_schema(header(event, Dispatcher::SCHEMA_HEADER)))
+        return respond(*mismatch)
+      end
 
       ctx = @build_context.call(event)
       return batch(event, ctx) if batch?(event, path)
@@ -50,8 +54,15 @@ module Prospect
 
     private
 
+    # API Gateway lower-cases header names, but a Function URL invoked directly
+    # in a test may not.
+    def header(event, name)
+      headers = event["headers"] || {}
+      headers[name] || headers.find { |k, _| k.to_s.downcase == name }&.last
+    end
+
     def health
-      { "ok" => true, "unit" => @unit,
+      { "ok" => true, "unit" => @unit, "schema" => @dispatcher.schema_hash,
         "procedures" => @dispatcher.procedure_ids.select { |id| serves?(id) }.sort }
     end
 

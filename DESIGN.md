@@ -966,11 +966,20 @@ how much each would hurt, not by how interesting it is.
    The CDK specs assert on synthesised CloudFormation, not on a stack that came
    up. Until one deploy happens, §6's numbers are an approximation and the
    construct is untested against the thing it exists to configure.
-3. **The schema hash is emitted and then ignored.** §4 describes it as the drift
-   detector: clients embed it, send it as a header, the server warns or rejects
-   on mismatch. `IR.extract` computes it; nothing sends it and nothing checks
-   it. The defence described in §7 as one of three layers is currently one of
-   two.
+3. ~~**The schema hash is emitted and then ignored.**~~ Wired end to end. The
+   emitter publishes `SCHEMA_HASH`, the TypeScript client sends it as
+   `X-Prospect-Schema` on every request, and `Dispatcher#check_schema` compares
+   it — from both transports, so Rack and Lambda behave identically.
+
+   Default policy is **warn, not reject**: failing hard would break every
+   browser holding a cached bundle the moment the contract changed, which is a
+   worse outcome than a log line. `on_schema_mismatch: :reject` returns 409 with
+   both hashes. A batch is checked once per request rather than per call — a
+   stale client is stale for all of it, and partial success is worse than
+   either outcome.
+
+   The hash is baked into each function's environment at synth time, so no cold
+   start spends anything walking the type graph to recompute it.
 
 ### Open — design questions the implementation sharpened
 

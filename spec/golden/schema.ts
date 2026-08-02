@@ -6,6 +6,8 @@
 // NOT touch map keys, which are data.
 
 
+export const SCHEMA_HASH = "sha256:bba896e69d2fc190469fcc585a9e4a922a0c01bd6525e20947234db8d95ab992"
+
 export interface Ping {
   who: string
   loud?: boolean
