@@ -38,6 +38,13 @@ module Prospect
       end
 
       def with_middleware(*names)
+        unknown = names - Dispatcher::MIDDLEWARE.keys
+        if unknown.any?
+          raise DefinitionError,
+                "#{self}: unknown middleware #{unknown.map(&:inspect).join(', ')}. " \
+                "Known: #{Dispatcher::MIDDLEWARE.keys.map(&:inspect).join(', ')}"
+        end
+
         previous = @middleware || []
         @middleware = previous + names
         yield
@@ -49,6 +56,19 @@ module Prospect
       def mutation(name, **opts, &handler) = define(name, :mutation, **opts, &handler)
 
       def mount(router)
+        unless router.is_a?(Class) && router < Prospect::Router
+          raise DefinitionError,
+                "#{self}: can only mount a Prospect::Router, got #{router.inspect}"
+        end
+        raise DefinitionError, "#{self}: cannot mount itself" if router == self
+
+        clash = mounted.find { |m| m.path == router.path }
+        if clash
+          raise DefinitionError,
+                "#{self}: #{router} and #{clash} both use path #{router.path.inspect}, " \
+                "so their procedures would collide"
+        end
+
         mounted << router
       end
 
@@ -72,8 +92,23 @@ module Prospect
 
       private
 
+      # Every check here fires at load time rather than on the first request.
+      # For a framework the message *is* the API: a misuse that surfaces as
+      # `NoMethodError on nil` three layers down is a defect, not a user error.
       def define(name, kind, input:, output:, errors: [], deploy: {}, &handler)
-        raise ArgumentError, "#{self}: `path` must be declared before procedures" unless path
+        raise DefinitionError, "#{self}: declare `path` before any procedure" unless path
+
+        unless handler
+          raise DefinitionError, "#{self}: #{path}.#{name} has no handler block"
+        end
+
+        if own_procedures.any? { |p| p.name == name }
+          raise DefinitionError, "#{self}: #{path}.#{name} is declared twice"
+        end
+
+        check_struct!(name, "input", input)
+        check_struct!(name, "output", output)
+        errors.each { |e| check_error!(name, e) }
 
         own_procedures << Procedure.new(
           path: path, name: name, kind: kind,
@@ -81,6 +116,22 @@ module Prospect
           deploy: deploy, middleware: (@middleware || []).dup,
           handler: handler
         )
+      end
+
+      def check_struct!(name, role, klass)
+        return if klass.is_a?(Class) && klass < T::Struct
+
+        raise DefinitionError,
+              "#{self}: #{path}.#{name} #{role} must be a T::Struct subclass, " \
+              "got #{klass.inspect}"
+      end
+
+      def check_error!(name, klass)
+        return if klass.is_a?(Class) && klass <= Prospect::Error
+
+        raise DefinitionError,
+              "#{self}: #{path}.#{name} declared #{klass.inspect} in `errors:`, " \
+              "which is not a Prospect::Error"
       end
     end
   end

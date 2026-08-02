@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 module Prospect
+  # Raised for router DSL misuse, always at load time. Distinct from Error,
+  # which is part of an app's wire contract — this one never reaches a client.
+  class DefinitionError < StandardError; end
+
   # Base class for declared, typed errors.
   #
   # IMPLEMENTATION NOTE — these are deliberately NOT `T::Struct`s, even though
