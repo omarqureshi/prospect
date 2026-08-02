@@ -97,6 +97,20 @@ module Prospect
       end
     end
 
+    # Types with no JSON representation of their own, matched by class NAME so
+    # Prospect needs no runtime dependency on date or bigdecimal.
+    #
+    # BigDecimal is the one that bites: left alone it reaches JSON.generate and
+    # emits `0.125e1`, which no client parses. It goes out as a string because
+    # JSON numbers are doubles and a decimal that survives a round trip through
+    # one is not a decimal — which is also why the IR maps `decimal` to
+    # TypeScript `string`.
+    ENCODERS = {
+      "Date"       => ->(v) { v.iso8601 },
+      "DateTime"   => ->(v) { v.to_time.utc.iso8601 },
+      "BigDecimal" => ->(v) { v.to_s("F") }
+    }.freeze
+
     def serialize(value)
       case value
       when nil then nil
@@ -105,7 +119,13 @@ module Prospect
       when Time then value.utc.iso8601   # pinned encoding — bookface DESIGN §6.5
       when Symbol then value.to_s
       else
-        value.respond_to?(:serialize) ? stringify(value.serialize) : value
+        if (encode = ENCODERS[value.class.name])
+          encode.call(value)
+        elsif value.respond_to?(:serialize)
+          stringify(value.serialize)
+        else
+          value
+        end
       end
     end
 

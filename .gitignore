@@ -19,3 +19,6 @@ node_modules/
 *.gem
 
 .DS_Store
+/.bundle/
+/vendor/bundle/
+Gemfile.lock
