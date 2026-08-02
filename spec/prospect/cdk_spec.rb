@@ -165,6 +165,98 @@ RSpec.describe "Prospect::CDK::Service", :cdk do
       expect(synthesised).to match_array(units.map(&:name))
     end
 
+    describe "the JWT authorizer" do
+      def with_auth(anonymous:, **props)
+        synth(authorizer: { kind: :jwt, issuer: "https://issuer.example",
+                            audience: ["client-id"], anonymous: anonymous }, **props)
+      end
+
+      def routes(template)
+        resources(template, "AWS::ApiGatewayV2::Route").map { |r| r["Properties"] }
+      end
+
+      it "creates a JWT authorizer" do
+        with_auth(anonymous: []).resource_count_is("AWS::ApiGatewayV2::Authorizer", 1)
+      end
+
+      it "creates none when not configured" do
+        synth.resource_count_is("AWS::ApiGatewayV2::Authorizer", 0)
+      end
+
+      it "protects every route when nothing is anonymous" do
+        rs = routes(with_auth(anonymous: []))
+        expect(rs).to all(include("AuthorizationType" => "JWT"))
+      end
+
+      it "leaves a wholly-anonymous unit unprotected on its greedy route" do
+        rs = routes(with_auth(anonymous: Fixtures::AppRouter.procedures.map(&:id)))
+        expect(rs.map { |r| r["RouteKey"] }).to include("ANY /rpc/echo/{proxy+}")
+        expect(rs.none? { |r| r["AuthorizationType"] == "JWT" }).to be(true)
+      end
+
+      # A greedy route cannot protect one procedure and expose another, so a
+      # mixed unit has to be split into exact routes.
+      it "splits a mixed unit into per-procedure routes" do
+        rs = routes(with_auth(anonymous: ["echo.ping"]))
+        keys = rs.to_h { |r| [r["RouteKey"], r["AuthorizationType"]] }
+
+        expect(keys).to include("ANY /rpc/echo/ping" => "NONE")
+        expect(keys).to include("ANY /rpc/echo/secret" => "JWT")
+        expect(keys.keys).not_to include("ANY /rpc/echo/{proxy+}")
+      end
+
+      it "still routes every procedure after splitting" do
+        keys = routes(with_auth(anonymous: ["echo.ping"])).map { |r| r["RouteKey"] }
+        Fixtures::AppRouter.procedures.select { |p| p.path.to_s == "echo" }.each do |p|
+          expect(keys).to include("ANY /rpc/echo/#{p.name}")
+        end
+      end
+
+      it "rejects an unknown authorizer kind" do
+        expect { synth(authorizer: { kind: :magic }) }
+          .to raise_error(ArgumentError, /unknown authorizer kind/)
+      end
+    end
+
+    describe "a custom domain" do
+      def with_domain
+        stack = AWSCDK::Stack.new(AWSCDK::App.new, "D", { env: { region: "eu-west-2", account: "111111111111" } })
+        cert = AWSCDK::CertificateManager::Certificate.from_certificate_arn(
+          stack, "Cert", "arn:aws:acm:eu-west-2:111111111111:certificate/abc"
+        )
+        svc = Prospect::CDK::Service.new(stack, "Api", {
+          router: Fixtures::AppRouter, code_root: @asset_root,
+          domain: { name: "rpc.example.net", certificate: cert,
+                    hosted_zone_id: "Z123", zone_name: "example.net" }
+        })
+        [AWSCDK::Assertions::Template.from_stack(stack), svc]
+      end
+
+      it "creates a domain name and maps the API to it" do
+        template, = with_domain
+        template.resource_count_is("AWS::ApiGatewayV2::DomainName", 1)
+        template.resource_count_is("AWS::ApiGatewayV2::ApiMapping", 1)
+      end
+
+      it "creates a Route 53 alias record" do
+        template, = with_domain
+        template.has_resource_properties("AWS::Route53::RecordSet", {
+          "Name" => "rpc.example.net.", "Type" => "A"
+        })
+      end
+
+      # Generated clients read this, so it must be the URL callers actually use.
+      it "reports the custom domain as the service URL" do
+        _, svc = with_domain
+        expect(svc.url).to eq("https://rpc.example.net")
+      end
+
+      it "creates none of it when no domain is configured" do
+        synth.resource_count_is("AWS::ApiGatewayV2::DomainName", 0)
+        synth.resource_count_is("AWS::Route53::RecordSet", 0)
+      end
+    end
+
     it "rejects an unknown granularity at synth time" do
       expect { synth(granularity: :whatever) }
         .to raise_error(ArgumentError, /unknown granularity/)

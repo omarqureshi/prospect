@@ -40,17 +40,64 @@ module Prospect
         @mount     = @props.fetch(:mount_path)
         @functions = {}
 
-        @api = AWSCDK::APIGatewayv2::HttpAPI.new(self, "Api")
+        @anonymous  = Array(@props.dig(:authorizer, :anonymous)).map(&:to_s)
+        @authorizer = build_authorizer(@props[:authorizer])
+
+        @api = AWSCDK::APIGatewayv2::HttpAPI.new(self, "Api", api_props)
         units.each { |unit| add_unit(unit) }
+        add_dns_record if @props[:domain]
       end
 
       # Look a unit's function up by name, for grants:
       #   table.grant_read_write_data(api.function(:posts))
       def function(name) = @functions.fetch(name.to_s)
 
-      def url = @api.url
+      # The public base URL: the custom domain when there is one, otherwise the
+      # generated API Gateway endpoint. Generated clients read this, so it must
+      # be whichever one callers will actually use.
+      def url
+        @props[:domain] ? "https://#{@props.dig(:domain, :name)}" : @api.url
+      end
+
+      def domain_name = @domain_name
 
       private
+
+      # A custom domain needs a us-east-1 ACM certificate for CloudFront-fronted
+      # APIs; for a regional HTTP API the cert must live in the API's own region.
+      # Passing the cert in rather than creating it keeps that decision — and the
+      # cross-region dance — with the caller.
+      def api_props
+        return {} unless @props[:domain]
+
+        cfg = @props[:domain]
+        @domain_name = AWSCDK::APIGatewayv2::DomainName.new(self, "Domain", {
+          domain_name: cfg.fetch(:name),
+          certificate: cfg.fetch(:certificate)
+        })
+        { default_domain_mapping: { domain_name: @domain_name } }
+      end
+
+      # Looked up by attributes rather than HostedZone.from_lookup on purpose:
+      # a lookup needs AWS credentials at synth time, which makes `cdk synth`
+      # non-deterministic and breaks it offline and in CI.
+      def add_dns_record
+        cfg = @props[:domain]
+        zone = cfg[:hosted_zone] || AWSCDK::Route53::HostedZone.from_hosted_zone_attributes(
+          self, "Zone",
+          { hosted_zone_id: cfg.fetch(:hosted_zone_id), zone_name: cfg.fetch(:zone_name) }
+        )
+
+        AWSCDK::Route53::ARecord.new(self, "Alias", {
+          zone: zone,
+          record_name: cfg.fetch(:name),
+          target: AWSCDK::Route53::RecordTarget.from_alias(
+            AWSCDK::Route53Targets::APIGatewayv2DomainProperties.new(
+              @domain_name.regional_domain_name, @domain_name.regional_hosted_zone_id
+            )
+          )
+        })
+      end
 
       # Shared with the packager (Prospect::Units), so the set of functions
       # synthesised here can never diverge from the set of artifacts built —
@@ -64,13 +111,68 @@ module Prospect
         fn = build_function(name, unit.procedures)
         @functions[name] = fn
 
-        @api.add_routes({
-          path: unit.route,
-          methods: [AWSCDK::APIGatewayv2::HttpMethod::ANY],
-          integration: AWSCDK::APIGatewayv2Integrations::HttpLambdaIntegration.new(
-            "#{logical(name)}Integration", fn
+        integration = AWSCDK::APIGatewayv2Integrations::HttpLambdaIntegration.new(
+          "#{logical(name)}Integration", fn
+        )
+
+        routes_for(unit).each do |path, authorizer|
+          props = { path: path,
+                    methods: [AWSCDK::APIGatewayv2::HttpMethod::ANY],
+                    integration: integration }
+          props[:authorizer] = authorizer if authorizer
+          @api.add_routes(props)
+        end
+      end
+
+      # A JWT authorizer attaches per ROUTE, so a greedy `/rpc/posts/{proxy+}`
+      # cannot protect `posts.create` while leaving `posts.feed` open. When a
+      # unit's procedures disagree, it gets one exact route each; when they
+      # agree, it keeps the single greedy route.
+      #
+      # Route count is the cost, and API Gateway has a per-API quota — worth
+      # watching on an app with many mixed services.
+      def routes_for(unit)
+        return [[unit.route, nil]] unless @authorizer
+
+        public_, protected_ = unit.procedures.partition { |p| anonymous?(p) }
+        return [[unit.route, nil]] if protected_.empty?
+        return [[unit.route, @authorizer]] if public_.empty?
+
+        unit.procedures.map do |p|
+          ["#{@mount}/#{p.path}/#{p.name}", anonymous?(p) ? nil : @authorizer]
+        end
+      end
+
+      def anonymous?(procedure) = @anonymous.include?(procedure.id)
+
+      # LIMITATION worth knowing before relying on this: an API Gateway v2 JWT
+      # authorizer is all-or-nothing. It rejects a request with no token, and a
+      # route without one receives no verified claims at all. There is no
+      # "verify if present".
+      #
+      # So a procedure listed in `anonymous:` can never see the caller, even when
+      # they are signed in — which breaks anything that is public but
+      # viewer-dependent. bookface has four of those (`posts.get` computes
+      # `editable`, `reactions.mine` returns the viewer's own reactions). The
+      # fix is a Lambda authorizer that allows unauthenticated through while
+      # attaching claims when present; that is not built.
+      def build_authorizer(config)
+        return nil if config.nil?
+
+        case config[:kind]
+        when :jwt
+          AWSCDK::APIGatewayv2Authorizers::HttpJwtAuthorizer.new(
+            "#{@props.fetch(:id_prefix, 'Api')}Jwt",
+            config.fetch(:issuer),
+            { jwt_audience: Array(config.fetch(:audience)) }
           )
-        })
+        when :user_pool
+          AWSCDK::APIGatewayv2Authorizers::HttpUserPoolAuthorizer.new(
+            "#{@props.fetch(:id_prefix, 'Api')}Pool", config.fetch(:user_pool)
+          )
+        else
+          raise ArgumentError, "unknown authorizer kind #{config[:kind].inspect}"
+        end
       end
 
       def build_function(name, procedures)

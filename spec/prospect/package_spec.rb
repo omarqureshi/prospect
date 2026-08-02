@@ -52,6 +52,26 @@ RSpec.describe Prospect::Package do
     end
   end
 
+  describe "dedicated procedures" do
+    # A procedure promoted to its own Lambda is a subset of its router, so
+    # reusing the router's gemfile is correct rather than a guess.
+    it "falls back to the router's gemfile" do
+      # other.touch is :dedicated in the fixture; only other.touch.gemfile exists,
+      # so remove it and check the fallback finds a router-level one.
+      FileUtils.mv(File.join(@root, "units/other.touch.gemfile"),
+                   File.join(@root, "units/other.gemfile"))
+      unit = plan.units.find { |u| u.name == "other.touch" }
+      expect(plan.gemfile_for(unit)).to end_with("units/other.gemfile")
+    end
+
+    it "still refuses when neither exists" do
+      FileUtils.rm(File.join(@root, "units/other.touch.gemfile"))
+      unit = plan.units.find { |u| u.name == "other.touch" }
+      expect { plan.gemfile_for(unit) }
+        .to raise_error(Prospect::Package::Error, /tried.*other\.touch\.gemfile.*other\.gemfile/m)
+    end
+  end
+
   describe "deduplication by gem set" do
     # The mitigation for the build-count multiplier in §6. Without it, N units
     # means N installs even when most share the same handful of gems.

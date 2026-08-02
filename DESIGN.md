@@ -961,11 +961,26 @@ how much each would hurt, not by how interesting it is.
    - **Containers must run as the invoking user.** Otherwise every built file is
      root-owned on the host and the next `rm -rf build` fails.
 
-2. **Nothing has ever been deployed.** Cold start was measured in a
-   Lambda-shaped container, not on Lambda, so it excludes sandbox provisioning.
-   The CDK specs assert on synthesised CloudFormation, not on a stack that came
-   up. Until one deploy happens, §6's numbers are an approximation and the
-   construct is untested against the thing it exists to configure.
+2. **Nothing has ever been deployed.** Everything up to `cdk deploy` now works:
+   bookface synthesises a complete template — 6 Lambdas, 13 routes with
+   per-route auth, a JWT authorizer, four DynamoDB tables, Cognito — against
+   real built artifacts, offline and without credentials. What remains untested
+   is the part only AWS can answer: whether the stack comes up, what cold start
+   actually costs (the container measurement excludes sandbox provisioning), and
+   whether a real Cognito token flows through the authorizer into `ctx.viewer`.
+
+   **New blocker discovered while wiring the authorizer: optional auth is not
+   expressible.** An API Gateway v2 JWT authorizer is all-or-nothing — it
+   rejects a request with no token, and a route without one receives no verified
+   claims at all. There is no "verify if present". So a procedure listed in
+   `anonymous:` can never see its caller, which breaks anything public but
+   viewer-dependent. bookface has four: `posts.get` computes `editable`, and
+   `reactions.mine` returns the viewer's own reactions. Both would silently
+   behave as though every caller were signed out.
+
+   The fix is a Lambda authorizer that allows unauthenticated requests through
+   while attaching claims when present. It is the last thing standing between
+   this design and a deployment that behaves as specified.
 3. ~~**The schema hash is emitted and then ignored.**~~ Wired end to end. The
    emitter publishes `SCHEMA_HASH`, the TypeScript client sends it as
    `X-Prospect-Schema` on every request, and `Dispatcher#check_schema` compares

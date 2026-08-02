@@ -106,6 +106,7 @@ module Prospect
           raise DefinitionError, "#{self}: #{path}.#{name} is declared twice"
         end
 
+        check_deploy!(name, deploy)
         check_struct!(name, "input", input)
         check_struct!(name, "output", output)
         errors.each { |e| check_error!(name, e) }
@@ -116,6 +117,21 @@ module Prospect
           deploy: deploy, middleware: (@middleware || []).dup,
           handler: handler
         )
+      end
+
+      # A misspelled or unsupported deploy key would otherwise be ignored in
+      # silence: bookface asked for `timeout: 60` where the construct reads
+      # `timeout_seconds`, and the procedure quietly kept the 10s default. A
+      # deployment setting that does nothing is worse than one that fails.
+      DEPLOY_KEYS = %i[memory_size timeout_seconds granularity].freeze
+
+      def check_deploy!(name, deploy)
+        unknown = deploy.keys - DEPLOY_KEYS
+        return if unknown.empty?
+
+        raise DefinitionError,
+              "#{self}: #{path}.#{name} has unknown deploy #{unknown.map(&:inspect).join(', ')}. " \
+              "Known: #{DEPLOY_KEYS.map(&:inspect).join(', ')}"
       end
 
       def check_struct!(name, role, klass)

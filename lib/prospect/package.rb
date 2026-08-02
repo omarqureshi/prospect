@@ -50,15 +50,24 @@ module Prospect
       def unit_dir(unit) = File.join(out, unit.name)
 
       def gemfile_for(unit)
-        path = File.join(root, units_dir, "#{unit.name}.gemfile")
-        return path if File.exist?(path)
+        candidates = [unit.name]
+        # A procedure promoted to its own Lambda (`granularity: :dedicated`)
+        # falls back to its router's gemfile — "posts.destroy" to "posts". That
+        # is not guessing: a dedicated procedure's dependencies are a subset of
+        # its router's, so the fallback is correct and it removes the pointless
+        # step of copying a gemfile to rename it.
+        candidates << unit.name.split(".").first if unit.name.include?(".")
 
-        # A unit with no gemfile of its own is a hard error, not a silent
-        # fallback to the whole app's dependencies — quietly shipping every gem
-        # would defeat the slicing and nobody would notice until cold starts got
-        # slow.
-        raise Error, "no gemfile for unit #{unit.name.inspect} at #{path}. " \
-                     "Create it, or set units_dir:"
+        found = candidates.lazy
+                          .map { |n| File.join(root, units_dir, "#{n}.gemfile") }
+                          .find { |f| File.exist?(f) }
+        return found if found
+
+        # With none of them present it is a hard error, not a fallback to the
+        # whole app's dependencies — quietly shipping every gem would defeat the
+        # slicing, and nobody would notice until cold starts got slow.
+        raise Error, "no gemfile for unit #{unit.name.inspect}; tried " \
+                     "#{candidates.map { |n| "#{units_dir}/#{n}.gemfile" }.join(', ')}"
       end
 
       # Units whose gemfiles resolve identically share one bundle build.

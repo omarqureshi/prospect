@@ -115,6 +115,33 @@ RSpec.describe "router DSL misuse" do
     end
   end
 
+  describe "deploy settings" do
+    # Found by synthesising bookface: it asked for `timeout: 60` where the
+    # construct reads `timeout_seconds`, and the procedure silently kept the
+    # 10s default. A deployment setting that does nothing is worse than one
+    # that fails.
+    it "refuses an unknown deploy key rather than ignoring it" do
+      expect {
+        router do
+          path :a
+          query(:x, input: Fixtures::Empty, output: Fixtures::Empty,
+                    deploy: { timeout: 60 }) { Fixtures::Empty.new }
+        end
+      }.to raise_error(Prospect::DefinitionError, /unknown deploy :timeout.*Known:.*timeout_seconds/m)
+    end
+
+    it "accepts the supported keys" do
+      expect {
+        router do
+          path :a
+          query(:x, input: Fixtures::Empty, output: Fixtures::Empty,
+                    deploy: { memory_size: 2048, timeout_seconds: 60,
+                              granularity: :dedicated }) { Fixtures::Empty.new }
+        end
+      }.not_to raise_error
+    end
+  end
+
   describe "mounting" do
     it "refuses a non-router" do
       expect { Class.new(Prospect::Router).mount(Object) }
