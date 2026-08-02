@@ -1,0 +1,21 @@
+# Bundler
+/.bundle/
+**/.bundle/
+**/vendor/bundle/
+/vendor/bundle/
+
+# Spike build output — regenerable by re-running the scripts in spike/.
+# Note these are written by Docker as root; remove via a container, not sudo.
+spike/bundling-out*/
+spike/coldstart/vendor/
+
+# CDK
+cdk.out/
+node_modules/
+
+# Generated artifacts — schema.json is committed deliberately (see DESIGN.md §7),
+# emitted TypeScript is not.
+/generated/
+*.gem
+
+.DS_Store

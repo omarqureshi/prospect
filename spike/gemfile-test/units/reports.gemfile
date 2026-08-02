@@ -1,0 +1,3 @@
+group :unit_reports, optional: true do
+  gem "mustermann"
+end

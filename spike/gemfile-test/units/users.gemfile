@@ -1,0 +1,3 @@
+group :unit_users, optional: true do
+  gem "tilt"
+end

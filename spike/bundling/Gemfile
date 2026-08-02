@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+# Native extensions with no precompiled binaries — these must actually compile.
+gem "oj"
+gem "bcrypt"
+# Realistic RPC deps.
+gem "sorbet-runtime"
+gem "rack"

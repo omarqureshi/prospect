@@ -1,0 +1,20 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    rack (3.2.6)
+    sorbet-runtime (0.6.13393)
+
+PLATFORMS
+  ruby
+  x86_64-linux
+
+DEPENDENCIES
+  rack
+  sorbet-runtime
+
+CHECKSUMS
+  rack (3.2.6) sha256=5ed78e1f73b2e25679bec7d45ee2d4483cc4146eb1be0264fc4d94cb5ef212c2
+  sorbet-runtime (0.6.13393) sha256=920a2d35f69cb268fd8a1da8fe721b543cc2d8e9b3ae90df55105fa191bdcf96
+
+BUNDLED WITH
+  4.0.16

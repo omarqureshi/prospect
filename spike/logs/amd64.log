@@ -1,0 +1,33 @@
+### platform=linux/amd64
+pull_seconds=104
+ruby 4.0.6 (2026-07-14 revision 03b6d3f889) +PRISM [x86_64-linux]
+host_arch=x86_64
+Don't run Bundler as root. Installing your bundle as root will break this
+application for all non-root users on this machine.
+Fetching gem metadata from https://rubygems.org/..
+Resolving dependencies...
+Fetching bigdecimal 4.1.2
+Fetching ostruct 0.6.3
+Fetching sorbet-runtime 0.6.13392
+Fetching bcrypt 3.1.22
+Fetching rack 3.2.6
+Fetching oj 3.17.5
+Installing ostruct 0.6.3
+Installing bigdecimal 4.1.2 with native extensions
+Installing sorbet-runtime 0.6.13392
+Installing bcrypt 3.1.22 with native extensions
+Installing rack 3.2.6
+Installing oj 3.17.5 with native extensions
+Bundle complete! 4 Gemfile dependencies, 6 gems now installed.
+Bundled gems are installed into `/asset-output/vendor/bundle`
+--- built extensions:
+/asset-output/vendor/bundle/ruby/4.0.0/extensions/x86_64-linux/4.0.0/bcrypt-3.1.22/bcrypt_ext.so
+/asset-output/vendor/bundle/ruby/4.0.0/extensions/x86_64-linux/4.0.0/bigdecimal-4.1.2/bigdecimal.so
+/asset-output/vendor/bundle/ruby/4.0.0/extensions/x86_64-linux/4.0.0/oj-3.17.5/oj/oj.so
+/asset-output/vendor/bundle/ruby/4.0.0/gems/bcrypt-3.1.22/lib/bcrypt_ext.so
+/asset-output/vendor/bundle/ruby/4.0.0/gems/bigdecimal-4.1.2/lib/bigdecimal.so
+/asset-output/vendor/bundle/ruby/4.0.0/gems/oj-3.17.5/lib/oj/oj.so
+--- extension dirs:
+x86_64-linux
+build_seconds=23
+exit_status=0
