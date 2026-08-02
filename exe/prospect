@@ -1,0 +1,29 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+require "prospect"
+
+# Loads the app's router, then runs an emitter over its IR.
+#   prospect schema [--out schema.json]
+#   prospect emit ts [--out web/src/api/schema.ts]
+boot = ENV.fetch("PROSPECT_BOOT", "config/boot.rb")
+router_name = ENV.fetch("PROSPECT_ROUTER", "AppRouter")
+require File.expand_path(boot)
+router = Object.const_get(router_name)
+
+def opt(flag, default) = ARGV.include?(flag) ? ARGV[ARGV.index(flag) + 1] : default
+
+case ARGV.first
+when "schema"
+  out = opt("--out", "schema.json")
+  Prospect::IR.write(router, out)
+  puts "wrote #{out} (#{router.procedures.length} procedures)"
+when "emit"
+  abort "only `emit ts` is implemented" unless ARGV[1] == "ts"
+  out = opt("--out", "schema.ts")
+  require "fileutils"
+  FileUtils.mkdir_p(File.dirname(out))
+  File.write(out, Prospect::Emit::TypeScript.call(Prospect::IR.extract(router)))
+  puts "wrote #{out}"
+else
+  abort "usage: prospect {schema|emit ts} [--out PATH]"
+end

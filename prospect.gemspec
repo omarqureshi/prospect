@@ -13,7 +13,9 @@ Gem::Specification.new do |spec|
   spec.license     = "MIT"
 
   spec.required_ruby_version = ">= 3.3"
-  spec.files = Dir["lib/**/*.rb", "DESIGN.md"]
+  spec.files = Dir["lib/**/*.rb", "exe/*", "DESIGN.md"]
+  spec.bindir = "exe"
+  spec.executables = ["prospect"]
   spec.require_paths = ["lib"]
 
   spec.add_dependency "sorbet-runtime"
