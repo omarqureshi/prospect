@@ -1,0 +1,7 @@
+{
+  "name": "prospect-emitter-check",
+  "private": true,
+  "description": "Typechecks the emitted TypeScript. Not shipped in the gem.",
+  "scripts": { "tsc": "tsc -p spec/golden" },
+  "devDependencies": { "typescript": "5.7.2" }
+}
