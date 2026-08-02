@@ -482,7 +482,10 @@ free, but only after the first build on each machine.
 # Never `bundle exec` — the standalone setup is ~630ms cheaper. See cold start.
 require_relative "vendor/bundle/bundler/setup"
 require_relative "boot"
-HANDLER = Prospect::Lambda.handler(AppRouter, unit: "users")
+HANDLER = Prospect::Lambda.handler(
+  AppRouter, unit: "users",
+  context_builder: MyApp::Context.method(:from_event)
+)
 def handle(event:, context:) = HANDLER.call(event, context)
 ```
 
@@ -939,6 +942,8 @@ there, but a single implementation can't prove it fits anything else.
 - API Gateway has a default per-API route quota. `:per_procedure` at scale may
   need greedy routes plus in-function dispatch rather than one route each —
   which is fine, since §6 already makes granularity invisible to clients.
-- Does `Prospect::CDK::Service` belong in this gem at all, or in a companion gem so
-  the core has no jsii/Node dependency? Leaning companion: local dev and tests
-  shouldn't need a Node sidecar installed.
+- ~~Does `Prospect::CDK::Service` belong in this gem or a companion?~~ Answered:
+  it lives here but behind an explicit `require "prospect/cdk"`, so nothing is
+  loaded by default. A separate require costs nothing and gets the same result
+  as a separate gem; it can still become one if the dependency ever needs its
+  own release cycle.

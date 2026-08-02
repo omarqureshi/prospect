@@ -7,6 +7,7 @@ require_relative "prospect/error"
 require_relative "prospect/router"
 require_relative "prospect/dispatcher"
 require_relative "prospect/rack_app"
+require_relative "prospect/lambda"
 require_relative "prospect/ir"
 require_relative "prospect/emit/typescript"
 
