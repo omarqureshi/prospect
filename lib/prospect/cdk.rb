@@ -52,45 +52,20 @@ module Prospect
 
       private
 
-      # [name, [procedures], route] per deployment unit. Granularity is purely a
-      # deployment concern — every shape below serves identical procedure paths,
-      # so clients cannot tell which was chosen and never regenerate when it
-      # changes (DESIGN.md §6).
+      # Shared with the packager (Prospect::Units), so the set of functions
+      # synthesised here can never diverge from the set of artifacts built —
+      # which would otherwise deploy a function whose code does not exist.
       def units
-        case @props[:granularity]
-        when :single
-          [["app", @router.procedures, "#{@mount}/{proxy+}"]]
-        when :per_procedure
-          @router.procedures.map { |p| [p.id, [p], "#{@mount}/#{p.path}/#{p.name}"] }
-        when :per_router
-          per_router_units
-        else
-          raise ArgumentError, "unknown granularity #{@props[:granularity].inspect}"
-        end
+        Units.for(@router, granularity: @props[:granularity], mount: @mount)
       end
 
-      # One function per mounted router, except procedures that asked for their
-      # own via `deploy: { granularity: :dedicated }` — those get an exact route,
-      # which API Gateway prefers over the greedy one, so they peel off without
-      # changing any client.
-      def per_router_units
-        grouped = @router.procedures.group_by(&:path)
-        grouped.flat_map do |path, procedures|
-          dedicated, shared = procedures.partition { |p| p.deploy[:granularity] == :dedicated }
-
-          units = dedicated.map { |p| [p.id, [p], "#{@mount}/#{p.path}/#{p.name}"] }
-          units << [path.to_s, shared, "#{@mount}/#{path}/{proxy+}"] if shared.any?
-          units
-        end
-      end
-
-      def add_unit((name, procedures, route))
-        name = name.to_s
-        fn = build_function(name, procedures)
+      def add_unit(unit)
+        name = unit.name
+        fn = build_function(name, unit.procedures)
         @functions[name] = fn
 
         @api.add_routes({
-          path: route,
+          path: unit.route,
           methods: [AWSCDK::APIGatewayv2::HttpMethod::ANY],
           integration: AWSCDK::APIGatewayv2Integrations::HttpLambdaIntegration.new(
             "#{logical(name)}Integration", fn

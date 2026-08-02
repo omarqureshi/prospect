@@ -940,13 +940,27 @@ how much each would hurt, not by how interesting it is.
 
 ### Open — and now blocking
 
-1. **Nothing packages a deployment artifact.** `Prospect::CDK::Service` takes a
-   `code_root` and assumes prebuilt per-unit directories are already sitting
-   there. Nothing generates the `handler.rb` shim, runs `bundle install
-   --standalone`, or slices gems by unit. The construct synthesises correct
-   CloudFormation for functions whose code does not exist. This is the single
-   largest gap between "specs pass" and "deployable", and every measurement in
-   §6 assumed a packaging step that was never built.
+1. ~~**Nothing packages a deployment artifact.**~~ Built — `Prospect::Package`.
+   Plans and builds one artifact per unit: app sources, a generated handler
+   shim, and a standalone bundle sliced by the unit's gemfile, installed in the
+   Lambda image. Verified against bookface: 5 units, 3 distinct gem sets after
+   dedup, 31–38MB each, every one booting in a Lambda-like container and
+   answering a real API Gateway event.
+
+   Three things it found that the design had not anticipated:
+
+   - **`bundle install --standalone` does not vendor `path:` gems.** It writes
+     an absolute host path into `setup.rb`, so the artifact deploys and then
+     `LoadError`s on first invocation. Path gems are now copied into the bundle
+     and the entry rewritten. Caught by the verify step, which is exactly the
+     failure it exists for.
+   - **Unit gemfiles are fragments, not standalone Gemfiles** — the root Gemfile
+     supplies `source`, and `path:` resolves relative to the primary gemfile. So
+     the build runs *in place* via `BUNDLE_GEMFILE` with the app mounted at its
+     own absolute path, rather than copying gemfiles somewhere flat.
+   - **Containers must run as the invoking user.** Otherwise every built file is
+     root-owned on the host and the next `rm -rf build` fails.
+
 2. **Nothing has ever been deployed.** Cold start was measured in a
    Lambda-shaped container, not on Lambda, so it excludes sandbox provisioning.
    The CDK specs assert on synthesised CloudFormation, not on a stack that came

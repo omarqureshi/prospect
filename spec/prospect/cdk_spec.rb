@@ -147,6 +147,15 @@ RSpec.describe "Prospect::CDK::Service", :cdk do
       end
     end
 
+    # The invariant that makes sharing Prospect::Units worth it: if these two
+    # ever disagree, you deploy a function whose artifact was never built.
+    it "synthesises exactly the units the packager would build" do
+      units = Prospect::Units.for(Fixtures::AppRouter, granularity: :per_router)
+      synthesised = resources(synth, "AWS::Lambda::Function")
+                    .map { |f| f.dig("Properties", "Environment", "Variables", "PROSPECT_UNIT") }
+      expect(synthesised).to match_array(units.map(&:name))
+    end
+
     it "rejects an unknown granularity at synth time" do
       expect { synth(granularity: :whatever) }
         .to raise_error(ArgumentError, /unknown granularity/)
