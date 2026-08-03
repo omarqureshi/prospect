@@ -27,7 +27,7 @@ RSpec.describe "Prospect::CDK::Service", :cdk do
       require "tmpdir"
       require "fileutils"
       @asset_root = Dir.mktmpdir("prospect-cdk")
-      names = ["app"] +
+      names = ["app", "authorizer"] +
               Fixtures::AppRouter.procedures.map { |p| p.path.to_s } +
               Fixtures::AppRouter.procedures.map(&:id)
       names.uniq.each do |n|
@@ -209,6 +209,47 @@ RSpec.describe "Prospect::CDK::Service", :cdk do
         keys = routes(with_auth(anonymous: ["echo.ping"])).map { |r| r["RouteKey"] }
         Fixtures::AppRouter.procedures.select { |p| p.path.to_s == "echo" }.each do |p|
           expect(keys).to include("ANY /rpc/echo/#{p.name}")
+        end
+      end
+
+      describe "the lambda authorizer (optional auth)" do
+        def with_lambda_auth(anonymous: %w[echo.ping])
+          synth(authorizer: { kind: :lambda, issuer: "https://issuer.example",
+                              audience: ["client-id"], anonymous: anonymous })
+        end
+
+        it "creates an authorizer function alongside the service functions" do
+          units = Prospect::Units.for(Fixtures::AppRouter, granularity: :per_router).length
+          with_lambda_auth.resource_count_is("AWS::Lambda::Function", units + 1)
+        end
+
+        it "passes the issuer, audience and anonymous list to it" do
+          with_lambda_auth.has_resource_properties("AWS::Lambda::Function", {
+            "Environment" => { "Variables" => {
+              "PROSPECT_ISSUER" => "https://issuer.example",
+              "PROSPECT_AUDIENCE" => "client-id",
+              "PROSPECT_ANONYMOUS" => "echo.ping"
+            } }
+          })
+        end
+
+        # The payoff over the JWT authorizer: it decides per procedure from
+        # rawPath, so mixed units keep ONE greedy route instead of splitting.
+        it "keeps routes greedy even for a mixed unit" do
+          keys = routes(with_lambda_auth).map { |r| r["RouteKey"] }
+          expect(keys).to include("ANY /rpc/echo/{proxy+}")
+          expect(keys).not_to include("ANY /rpc/echo/ping")
+        end
+
+        it "protects every route with it, public ones included" do
+          rs = routes(with_lambda_auth)
+          expect(rs).to all(include("AuthorizationType" => "CUSTOM"))
+        end
+
+        it "creates fewer routes than the JWT authorizer would" do
+          lambda_routes = routes(with_lambda_auth).length
+          jwt_routes = routes(with_auth(anonymous: %w[echo.ping])).length
+          expect(lambda_routes).to be < jwt_routes
         end
       end
 

@@ -212,6 +212,50 @@ RSpec.describe Prospect::Package do
     end
   end
 
+  describe "the authorizer unit" do
+    let(:commands) { [] }
+    let(:shell) do
+      lambda do |*cmd|
+        commands << cmd
+        if cmd.last.include?("bundle install")
+          mount = cmd.find { |c| c.to_s.end_with?(":/vendor") }
+          vendor = mount.split(":").first
+          FileUtils.mkdir_p(File.join(vendor, "bundler"))
+          File.write(File.join(vendor, "bundler/setup.rb"), "# stub\n")
+        end
+        ["", true]
+      end
+    end
+
+    before do
+      File.write(File.join(@root, "units/authorizer.gemfile"),
+                 %(source "https://rubygems.org"\ngem "prospect"\ngem "jwt"\n))
+    end
+
+    it "is only planned when asked for" do
+      expect(plan.units.map(&:name)).not_to include("authorizer")
+      expect(plan(authorizer: true).units.map(&:name)).to include("authorizer")
+    end
+
+    it "gets a handler that reads its config from the environment" do
+      source = plan(authorizer: true).handler_source(
+        plan(authorizer: true).units.find { |u| u.name == "authorizer" }
+      )
+      expect(source).to include('ENV.fetch("PROSPECT_ISSUER")', "Prospect::Authorizer.handler")
+      expect(source).not_to include("AppRouter")
+    end
+
+    # It serves no procedures and needs none of the app — only prospect and jwt.
+    it "ships without the application sources" do
+      FileUtils.mkdir_p(File.join(@root, "app"))
+      File.write(File.join(@root, "app/thing.rb"), "# app code\n")
+      described_class.build(plan(authorizer: true, sources: %w[app]),
+                            verify: false, shell: shell)
+      expect(File).to exist(File.join(@root, "build/echo/app/thing.rb"))
+      expect(File).not_to exist(File.join(@root, "build/authorizer/app/thing.rb"))
+    end
+  end
+
   describe "the plan as a document" do
     it "describes what would be built, for review or a dry run" do
       doc = plan.to_h

@@ -969,18 +969,24 @@ how much each would hurt, not by how interesting it is.
    actually costs (the container measurement excludes sandbox provisioning), and
    whether a real Cognito token flows through the authorizer into `ctx.viewer`.
 
-   **New blocker discovered while wiring the authorizer: optional auth is not
-   expressible.** An API Gateway v2 JWT authorizer is all-or-nothing — it
-   rejects a request with no token, and a route without one receives no verified
-   claims at all. There is no "verify if present". So a procedure listed in
-   `anonymous:` can never see its caller, which breaks anything public but
-   viewer-dependent. bookface has four: `posts.get` computes `editable`, and
-   `reactions.mine` returns the viewer's own reactions. Both would silently
-   behave as though every caller were signed out.
+   ~~Optional auth is not expressible.~~ Solved with `Prospect::Authorizer`, a
+   Lambda REQUEST authorizer using the SIMPLE response format. An API Gateway
+   JWT authorizer is all-or-nothing — it rejects a request with no token, and a
+   route without one receives no verified claims at all — which would leave
+   bookface's four public-but-viewer-dependent procedures behaving as though
+   every caller were signed out.
 
-   The fix is a Lambda authorizer that allows unauthenticated requests through
-   while attaching claims when present. It is the last thing standing between
-   this design and a deployment that behaves as specified.
+   It turned out to be **better than the JWT authorizer, not merely a
+   workaround**: because a Lambda authorizer receives `rawPath`, it decides per
+   *procedure* rather than per route. Routes therefore stay greedy, where the
+   JWT authorizer forced a split into one exact route per procedure to carry
+   different auth. bookface went from 13 routes to 6.
+
+   Security posture, deliberately chosen: a present-but-invalid token is
+   treated as anonymous on a public procedure (an expired session should not
+   black out the public feed, and it grants no access) and refused on a
+   protected one. An unreachable JWKS refuses rather than failing open. JWKS is
+   cached in cold-start scope; claims are per invocation.
 3. ~~**The schema hash is emitted and then ignored.**~~ Wired end to end. The
    emitter publishes `SCHEMA_HASH`, the TypeScript client sends it as
    `X-Prospect-Schema` on every request, and `Dispatcher#check_schema` compares

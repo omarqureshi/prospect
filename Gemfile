@@ -3,6 +3,8 @@ gemspec
 
 group :development, :test do
   gem "rake"
+  # Only the authorizer needs it, and only at runtime in its own unit.
+  gem "jwt", "~> 3.1"
   gem "rspec", "~> 3.13"
   # Not a default gem since Ruby 3.4. Prospect matches BigDecimal by class
   # NAME, so it needs no runtime dependency — but the fixture instantiates one.

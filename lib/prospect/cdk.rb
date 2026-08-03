@@ -40,8 +40,9 @@ module Prospect
         @mount     = @props.fetch(:mount_path)
         @functions = {}
 
-        @anonymous  = Array(@props.dig(:authorizer, :anonymous)).map(&:to_s)
-        @authorizer = build_authorizer(@props[:authorizer])
+        @anonymous      = Array(@props.dig(:authorizer, :anonymous)).map(&:to_s)
+        @authorizer_kind = @props.dig(:authorizer, :kind)
+        @authorizer      = build_authorizer(@props[:authorizer])
 
         @api = AWSCDK::APIGatewayv2::HttpAPI.new(self, "Api", api_props)
         units.each { |unit| add_unit(unit) }
@@ -134,6 +135,12 @@ module Prospect
       def routes_for(unit)
         return [[unit.route, nil]] unless @authorizer
 
+        # A LAMBDA authorizer sees rawPath, so it decides per procedure and the
+        # route can stay greedy. A JWT authorizer only attaches per route, so a
+        # unit mixing public and protected procedures has to be split into one
+        # exact route each.
+        return [[unit.route, @authorizer]] if @authorizer_kind == :lambda
+
         public_, protected_ = unit.procedures.partition { |p| anonymous?(p) }
         return [[unit.route, nil]] if protected_.empty?
         return [[unit.route, @authorizer]] if public_.empty?
@@ -165,6 +172,19 @@ module Prospect
             "#{@props.fetch(:id_prefix, 'Api')}Jwt",
             config.fetch(:issuer),
             { jwt_audience: Array(config.fetch(:audience)) }
+          )
+        when :lambda
+          # Optional auth: allows an anonymous caller through on the declared
+          # public procedures while still attaching verified claims when a token
+          # is present. An API Gateway JWT authorizer cannot express that.
+          fn = authorizer_function(config)
+          AWSCDK::APIGatewayv2Authorizers::HttpLambdaAuthorizer.new(
+            "#{@props.fetch(:id_prefix, 'Api')}Auth", fn,
+            { response_types: [AWSCDK::APIGatewayv2Authorizers::HttpLambdaResponseType::SIMPLE],
+              # Cached per (identity source, route). Zero would invoke the
+              # authorizer on every request; the default caches by token.
+              results_cache_ttl: config[:cache_ttl] || AWSCDK::Duration.seconds(300),
+              identity_source: ["$request.header.Authorization"] }
           )
         when :user_pool
           AWSCDK::APIGatewayv2Authorizers::HttpUserPoolAuthorizer.new(
@@ -200,6 +220,26 @@ module Prospect
         from_procedures = procedures.filter_map { |p| p.deploy[key] }
         from_router     = procedures.map { |p| router_for(p)&.deploy_config&.dig(key) }.compact
         (from_procedures + from_router + [@props.dig(:defaults, key), @props[key]].compact).max
+      end
+
+      # Its own small function, built like any other unit. `identity_source`
+      # above means API Gateway caches by Authorization header — so an anonymous
+      # request (no header) is NOT cached, and every one invokes this.
+      def authorizer_function(config)
+        AWSCDK::Lambda::Function.new(self, "Authorizer", {
+          runtime:      @props[:runtime] || AWSCDK::Lambda::Runtime.RUBY_4_0,
+          architecture: @props[:architecture] || AWSCDK::Lambda::Architecture.X86_64,
+          handler:      "handler.handle",
+          code:         AWSCDK::Lambda::Code.from_asset(asset_path_for("authorizer")),
+          memory_size:  config[:memory_size] || 512,
+          timeout:      AWSCDK::Duration.seconds(config[:timeout_seconds] || 10),
+          environment: {
+            "PROSPECT_ISSUER"    => config.fetch(:issuer),
+            "PROSPECT_AUDIENCE"  => Array(config.fetch(:audience)).join(","),
+            "PROSPECT_ANONYMOUS" => @anonymous.join(","),
+            "PROSPECT_MOUNT"     => @mount
+          }
+        })
       end
 
       def schema_hash
