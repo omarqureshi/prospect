@@ -99,7 +99,7 @@ module Prospect
     end
 
     def claims_from(token)
-      require "jwt"
+      require_jwt!
       payload, = JWT.decode(
         token, nil, true,
         algorithms: ["RS256"],
@@ -116,6 +116,18 @@ module Prospect
       # signature, key-lookup and claim failures, and every one of them means
       # the same thing here — this token is not trustworthy.
       raise Unverified, "#{e.class}: #{e.message}"
+    end
+
+    # `jwt` is deliberately not a runtime dependency of the gem: only this class
+    # needs it, and only the authorizer's own deployment unit installs it.
+    # A bare LoadError here would not say any of that.
+    def require_jwt!
+      require "jwt"
+    rescue LoadError
+      raise LoadError,
+            "Prospect::Authorizer needs the `jwt` gem, which prospect does not " \
+            "depend on — only the authorizer uses it. Add `gem \"jwt\"` to the " \
+            "authorizer unit's gemfile."
     end
 
     # Cold-start scope: fetched once per execution environment and reused across

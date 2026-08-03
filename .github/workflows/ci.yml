@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  spec:
+    runs-on: ubuntu-latest
+    env:
+      # The :cdk group comes from a private gem server this runner cannot reach.
+      # The CDK specs skip loudly when aws-cdk-lib is absent, which is exactly
+      # the case they were written for.
+      BUNDLE_WITHOUT: cdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec rspec
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      # Compiles the emitted types against spec/golden/usage.ts, whose
+      # @ts-expect-error assertions fail the build if the types stop
+      # constraining. A golden file alone would not catch that.
+      - run: npx tsc -p spec/golden

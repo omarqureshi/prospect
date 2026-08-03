@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write   # publishing to this repo's own package registry
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_WITHOUT: cdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # A tag that disagrees with the gem version publishes something nobody can
+      # find, and the version cannot be reused afterwards.
+      - name: Tag must match the gem version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(ruby -Ilib -e 'require "prospect/version"; print Prospect::VERSION')
+          if [ "$tag" != "$version" ]; then
+            echo "tag $tag does not match Prospect::VERSION $version"
+            exit 1
+          fi
+
+      # A published version is immutable, so the suite runs before the push
+      # rather than after it.
+      - run: bundle exec rspec
+
+      - run: gem build prospect.gemspec
+
+      - name: Publish to GitHub Packages
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gem push --host "https://rubygems.pkg.github.com/${GITHUB_REPOSITORY_OWNER}" \
+            prospect-*.gem
