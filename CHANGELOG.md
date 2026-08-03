@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.2
+
+- `Prospect::Package` accepts `env:`, forwarded into the build container. A
+  private gem source needs credentials at build time and the container inherits
+  nothing from the host. Forwarded rather than written to disk — a credential
+  baked into the artifact would ship to Lambda, where it is useless and a
+  liability.
+
 ## 0.0.1
 
 First release. Everything here is specced (208 examples) and exercised by a real

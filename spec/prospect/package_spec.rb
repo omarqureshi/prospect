@@ -189,6 +189,23 @@ RSpec.describe Prospect::Package do
       expect(commands.map(&:last).join).to include("bundle install --standalone")
     end
 
+    # A private gem source needs credentials at build time, and the container
+    # inherits nothing from the host.
+    it "forwards the configured environment into the build container" do
+      build!(plan(env: { "BUNDLE_EXAMPLE__COM" => "user:token" }))
+      install = commands.find { |c| c.last.include?("bundle install") }
+      expect(install.each_cons(2).to_a).to include(["-e", "BUNDLE_EXAMPLE__COM=user:token"])
+    end
+
+    it "forwards nothing by default" do
+      build!
+      install = commands.find { |c| c.last.include?("bundle install") }
+      # The -e flags specifically: the install script itself exports
+      # BUNDLE_PATH, so matching the whole command would always hit.
+      passed = install.each_cons(2).select { |flag, _| flag == "-e" }.map(&:last)
+      expect(passed).to eq(["HOME=/tmp"])
+    end
+
     it "builds in the Lambda image on the configured platform" do
       build!
       expect(commands.first).to include("--platform", "linux/amd64",

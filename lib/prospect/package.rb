@@ -29,7 +29,14 @@ module Prospect
         platform: "linux/amd64", # x86_64 default: emulated arm64 measured 41x slower
         # Extra host paths to mount, for `path:` gems living outside the app
         # root — normal during development, absent once gems are published.
-        mounts: [].freeze
+        mounts: [].freeze,
+        # Environment forwarded into the build container. A private gem source
+        # needs credentials at BUILD time (BUNDLE_RUBYGEMS__PKG__GITHUB__COM and
+        # friends), and the container inherits nothing from the host.
+        #
+        # Forwarded, never written to disk: a credential baked into the artifact
+        # would ship to Lambda, where it is both useless and a liability.
+        env: {}.freeze
       }.freeze
 
       def initialize(router:, router_const:, context_builder:, **opts)
@@ -67,7 +74,7 @@ module Prospect
           "PROSPECT_AUDIENCE" => "verify", "PROSPECT_ANONYMOUS" => "" }
       end
 
-      %i[out root units_dir boot sources image platform mounts].each do |key|
+      %i[out root units_dir boot sources image platform mounts env].each do |key|
         define_method(key) { @opts[key] }
       end
 
@@ -330,6 +337,7 @@ module Prospect
           # owned by root and the next `rm -rf build` fails. HOME must be
           # writable for Bundler once we are not root.
           "--user", "#{Process.uid}:#{Process.gid}", "-e", "HOME=/tmp",
+          *@plan.env.flat_map { |k, v| ["-e", "#{k}=#{v}"] },
           *mounts, "-v", "#{vendor}:/vendor",
           "-w", File.expand_path(@plan.root),
           "--entrypoint", "bash", @plan.image, "-c", script
