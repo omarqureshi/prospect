@@ -19,6 +19,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # The bindings shell out to this; Node alone is not enough. Pinned,
+      # because an unpinned kernel would change what the CDK specs run against
+      # without anything in this repo changing.
+      - run: npm install -g @jsii/runtime@1.130.0
       - run: bundle exec rspec
 
   typescript:

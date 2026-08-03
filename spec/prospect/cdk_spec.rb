@@ -10,15 +10,22 @@
 begin
   require "prospect/cdk"
   CDK_AVAILABLE = true
-rescue LoadError => e
+rescue StandardError, LoadError => e
+  # Deliberately broad, and only around the require. Two distinct things can
+  # make the CDK unusable: the gem being absent (LoadError), and jsii's Node
+  # kernel being absent (a RuntimeError raised while the gem loads, because
+  # @jsii/runtime is an npm package the gem shells out to). Catching only the
+  # first meant a machine with the gems but no Node runtime failed the suite
+  # instead of skipping it.
   CDK_AVAILABLE = false
-  CDK_LOAD_ERROR = e.message
+  CDK_LOAD_ERROR = e.message.lines.first.to_s.strip
 end
 
 RSpec.describe "Prospect::CDK::Service", :cdk do
   if !CDK_AVAILABLE
     it "synthesises the router" do
-      skip "aws-cdk-lib not installed (#{CDK_LOAD_ERROR}) — run `bundle install --with cdk`"
+      skip "CDK unavailable (#{CDK_LOAD_ERROR}). Needs the aws-cdk-lib gems and " \
+           "`npm install -g @jsii/runtime` for the jsii kernel."
     end
   else
     # Code.from_asset needs a real directory per unit. Build them once in a

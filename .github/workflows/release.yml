@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: npm install -g @jsii/runtime@1.130.0
 
       # A tag that disagrees with the gem version publishes something nobody can
       # find, and the version cannot be reused afterwards.
