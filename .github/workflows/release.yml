@@ -11,14 +11,16 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      BUNDLE_WITHOUT: cdk
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
+      # jsii's kernel is a Node sidecar; the CDK specs need it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       # A tag that disagrees with the gem version publishes something nobody can
       # find, and the version cannot be reused afterwards.

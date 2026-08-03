@@ -8,17 +8,17 @@ on:
 jobs:
   spec:
     runs-on: ubuntu-latest
-    env:
-      # The :cdk group comes from a private gem server this runner cannot reach.
-      # The CDK specs skip loudly when aws-cdk-lib is absent, which is exactly
-      # the case they were written for.
-      BUNDLE_WITHOUT: cdk
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
+      # The CDK bindings are jsii-generated and talk to a kernel running as a
+      # Node sidecar, so the CDK specs need Node even though no Node is written.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: bundle exec rspec
 
   typescript:
